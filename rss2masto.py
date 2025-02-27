@@ -24,7 +24,7 @@ mastoTOKEN = ""
 mastoURL = ""
 mastoDB = ""
 mastoINI = "rss2masto.ini"
-debug = False   # this one you can edit, and change to False to suppress progress output
+debug = True   # this one you can edit, and change to False to suppress progress output
 ################################################################
 
 def read_config():
@@ -99,6 +99,7 @@ class rss2masto():
     self.entryLink = None
     self.entryTitle = None
     self.siteURL = None
+    self.summary = None
     self.existingHashes = existingHashes
 
   def _testURL(self, url):
@@ -116,16 +117,17 @@ class rss2masto():
   def _mastoPOST(self):
     """ Post to Mastodon """
     headers = {'Content-Type':'application/x-www-form-URLencoded'}
-    data = {'status':f'FROM: {self.name}\nMAIN URL: {self.siteURL}\n\nTITLE: {self.entryTitle}\n\n{self.entryLink}'}
-    try:
-      r = requests.post(mastoURL, headers=headers, data=data)
-    except requests.exceptions.RequestException as e:
-      raise SystemExit(e)
+    data = {'status':f'{self.entryTitle}\n\n{self.entryLink}\n\n{self.summary}'}
+#    try:
+#      r = requests.post(mastoURL, headers=headers, data=data)
+#    except requests.exceptions.RequestException as e:
+#      raise SystemExit(e)
 
-    if r.status_code != 200 and debug:
-      print(r.text)
-    
-    return r.status_code == 200
+#    if r.status_code != 200 and debug:
+#    print(r.text)
+ 
+    print(data)
+    return 200#r.status_code == 200
 
   def process(self):
     """ Process a specific feed, using feedparser module """
@@ -161,7 +163,9 @@ class rss2masto():
         self.entryLink = entry.link
 
       self.entryTitle = entry.title.replace("\n","").replace("&nbsp;","")             # Some basic sanitizing that bs4 doesn't seem to do
+      self.summary = entry.summary.replace("\n","").replace("&nbsp;","")             # Some basic sanitizing that bs4 doesn't seem to do
       self.entryTitle = bs4.BeautifulSoup(self.entryTitle, features="html.parser").text    # And now let bs4 extract only the text (strip html tags)
+      self.summary = bs4.BeautifulSoup(self.summary, features="html.parser").text
 
       # Let's create a hash of our entryLink-entryTitle combo
       toHash = f"{self.entryLink}{self.entryTitle}"
@@ -209,7 +213,7 @@ if __name__ == '__main__':
   #rss2masto("<friendly-name>", "<feed url>", conn, existingHashes).process()
 
   # Some examples:
-  rss2masto("DARING FIREBALL", "https://daringfireball.net/feeds/main", conn, existingHashes).process()
+  rss2masto("ncot.uk", "https://ncot.uk/index.xml", conn, existingHashes).process()
   #rss2masto("Open Access Tracking Project", "http://tagteam.harvard.edu/remix/oatp/items.rss", conn, existingHashes).process()
   #rss2masto("CASEYLISS.COM", "https://www.caseyliss.com/rss", conn, existingHashes).process()
   #rss2masto("NYT US", "https://rss.nytimes.com/services/xml/rss/nyt/US.xml", conn, existingHashes).process() 

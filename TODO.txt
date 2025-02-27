@@ -1,0 +1,5 @@
+Put the feed URL in the config file
+Add a way to make it only post one thing and then stop
+Add a way to make it pretend to post, but remember it, to avoid spamming
+Tidy up the output so it looks nicer
+Confine the output to Mastodon's output limit
