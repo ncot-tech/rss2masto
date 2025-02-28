@@ -4,7 +4,9 @@
 # Author: Leon Cowle - https://github.com/leoncowle or https://hachyderm.io/@leoncowle on Mastodon
 # Copyright: 2023 Leon Cowle
 # License: MIT (see LICENSE file)
-# Version: 0.1
+# Version: 0.2
+
+# Modified by James Grimwood - https://ncot.uk - https://github.com/ncot-tech
 
 import bs4
 import feedparser
@@ -15,16 +17,22 @@ import requests
 import re
 import os
 import configparser
+from dateutil import parser
+import argparse
 
 ####################### GLOBAL VARIABLES #######################
 ########### DO NOT EDIT THESE. EDIT rss2masto.ini INSTEAD ######
+rssURL = ""
 mastoHOST = ""
 mastoBASE = ""
 mastoTOKEN = ""
 mastoURL = ""
 mastoDB = ""
 mastoINI = "rss2masto.ini"
-debug = True   # this one you can edit, and change to False to suppress progress output
+debug = False
+single_mode = False
+dry_run = False
+last_mode = False
 ################################################################
 
 def read_config():
@@ -35,11 +43,13 @@ def read_config():
   global mastoDB
   global mastoURL
   global mastoBASE
+  global rssURL
   config = configparser.ConfigParser()
   config.read(mastoINI)
   mastoHOST = config["GLOBAL"]["mastoHOST"]
   mastoDB = config["GLOBAL"]["mastoDB"]
   mastoBASE = "/api/v1/statuses"
+  rssURL = config["GLOBAL"]["rssURL"]
   if config["GLOBAL"]["mastoTOKEN"]:
     mastoTOKEN = config["GLOBAL"]["mastoTOKEN"]
   elif "MASTOTOKEN" in os.environ:
@@ -63,6 +73,15 @@ def sql3_create_table(conn):
   try:
     c = conn.cursor()
     c.execute("CREATE TABLE IF NOT EXISTS seenposts (hash TEXT)")
+    conn.commit()
+  except sqlite3.Error as e:
+    SystemExit(e)
+
+def sql3_drop_all(conn):
+  """ Remove all data from the database """
+  try:
+    c = conn.cursor()
+    c.execute("DROP TABLE seenposts")
     conn.commit()
   except sqlite3.Error as e:
     SystemExit(e)
@@ -92,8 +111,7 @@ class rss2masto():
 
   """ Class to crawl an RSS feed and post each new entry in it to Mastodon """
 
-  def __init__(self, name, url, conn, existingHashes):
-    self.name = name
+  def __init__(self, url, conn, existingHashes):
     self.url = url
     self.conn = conn
     self.entryLink = None
@@ -117,17 +135,27 @@ class rss2masto():
   def _mastoPOST(self):
     """ Post to Mastodon """
     headers = {'Content-Type':'application/x-www-form-URLencoded'}
-    data = {'status':f'{self.entryTitle}\n\n{self.entryLink}\n\n{self.summary}'}
-#    try:
-#      r = requests.post(mastoURL, headers=headers, data=data)
-#    except requests.exceptions.RequestException as e:
-#      raise SystemExit(e)
+    # Build the output string, and truncate it to 470 characters to allow for a 23 char URL and some formatting
+    contentString = f'{self.entryTitle}\n{self.summary}'
+    postString = (contentString[:470] + "...") if len(contentString) > 470 else contentString
+    data = {'status':f'{postString}\n{self.entryLink}'}
 
-#    if r.status_code != 200 and debug:
-#    print(r.text)
+    if debug:
+      print (f'Post Text: {postString}')
+
+    if not dry_run:
+      try:
+        r = requests.post(mastoURL, headers=headers, data=data)
+      except requests.exceptions.RequestException as e:
+        raise SystemExit(e)
+
+      if r.status_code != 200 and debug:
+        print(r.text)
  
-    print(data)
-    return 200#r.status_code == 200
+      return r.status_code == 200
+    else:
+      print ("Dry Run, not posting to Mastodon")
+      return 200
 
   def process(self):
     """ Process a specific feed, using feedparser module """
@@ -142,7 +170,11 @@ class rss2masto():
       print(f"Error crawling {self.url}... Skipping...")
       return
     self.siteURL = rssFeed.feed.link
-    for entry in rssFeed.entries:
+
+    # Sort the entries, oldest first
+    sorted_entries = sorted(rssFeed.entries, key=lambda e: parser.parse(e.published) if 'published' in e else None)
+    # Go through them all
+    for index, entry in enumerate(sorted_entries):
       # Determine whether to use entry.link or entry.id as the link to the RSS item
       # NOTE: 'guid' in the RSS item translates to 'id' in the feedparser entry dict
       self.entryLink = None
@@ -178,6 +210,15 @@ class rss2masto():
           print(f"Skipping (already seen): {self.entryLink} {self.entryTitle}")
         continue
 
+      # Skip everything until the last one
+      if last_mode:
+        if index != len(sorted_entries) -1:
+          # skip this one
+          print("Skipping entry")
+          sql3_insert(self.conn, entryDigest)
+          continue
+
+
       if self._mastoPOST():
         # Our post to Mastodon was successful
         # Let's update dict and DB
@@ -185,6 +226,10 @@ class rss2masto():
         sql3_insert(self.conn, entryDigest)
         if debug:
           print(f"Successfully posted to Masto: {self.entryLink} {self.entryTitle}")
+        
+      if single_mode:
+        print("Single Mode active. Finishing.")
+        break
 
     # Commit once we've run through all the RSS items (entries)
     self.conn.commit()
@@ -192,11 +237,34 @@ class rss2masto():
 # MAIN
 if __name__ == '__main__':
 
+  # handle arguments
+  argparser = argparse.ArgumentParser(description="RSS To Mastodon Cross-Poster. V0.2")
+  argparser.add_argument("-d", action="store_true", help="Enable debugging mode.")
+  argparser.add_argument("-s", action="store_true", help="Post a single entry.")
+  argparser.add_argument("-r", action="store_true", help="Remove the database.")
+  argparser.add_argument("-y", action="store_true", help="Dry run, will not post to Mastodon.")
+  argparser.add_argument("-l", action="store_true", help="Skip all but last entry, post that.")
+
+  args = argparser.parse_args()
+  debug = args.d
+  dry_run = args.y
+  single_mode = args.s
+  last_mode = args.l
+
+  if single_mode and last_mode:
+    print ("Can't have Single Mode and Last Mode enabled together!")
+    exit(1)
+
   # Get configs from rss2masto.ini
   read_config()
 
   # Get DB connection
   conn = sql3_create_connection(mastoDB)
+
+  if args.r:
+    print ("On next run, whole RSS feed will be read.\n")
+    sql3_drop_all(conn)
+    exit(0)
 
   # Create table (if needed)
   sql3_create_table(conn)
@@ -204,19 +272,4 @@ if __name__ == '__main__':
   # Get current DB entries
   existingHashes = sql3_getAll(conn)
 
-  # Process feed(s)
-  #rss2masto("<friendly-name>", "<feed url>", conn, existingHashes).process()
-  #rss2masto("<friendly-name>", "<feed url>", conn, existingHashes).process()
-  #rss2masto("<friendly-name>", "<feed url>", conn, existingHashes).process()
-  #rss2masto("<friendly-name>", "<feed url>", conn, existingHashes).process()
-  #rss2masto("<friendly-name>", "<feed url>", conn, existingHashes).process()
-  #rss2masto("<friendly-name>", "<feed url>", conn, existingHashes).process()
-
-  # Some examples:
-  rss2masto("ncot.uk", "https://ncot.uk/index.xml", conn, existingHashes).process()
-  #rss2masto("Open Access Tracking Project", "http://tagteam.harvard.edu/remix/oatp/items.rss", conn, existingHashes).process()
-  #rss2masto("CASEYLISS.COM", "https://www.caseyliss.com/rss", conn, existingHashes).process()
-  #rss2masto("NYT US", "https://rss.nytimes.com/services/xml/rss/nyt/US.xml", conn, existingHashes).process() 
-  #rss2masto("SIXCOLORS", "https://feedpress.me/sixcolors?type=xml", conn, existingHashes).process()
-  #rss2masto("THE VERGE: APPLE", "https://www.theverge.com/apple/rss/index.xml", conn, existingHashes).process()
-  #rss2masto("CNET NEWS", "https://www.cnet.com/rss/news", conn, existingHashes).process()
+  rss2masto(rssURL, conn, existingHashes).process()

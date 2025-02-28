@@ -1,5 +1,7 @@
 # rss2masto.db DB file
 rss2masto.db
+# The ini file so you don't accidentally commit your token and url!
+rss2masto.ini
 
 # Standard Python entries for .gitignore below (from github template)
 

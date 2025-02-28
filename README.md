@@ -35,7 +35,9 @@ pip install -r requirements.txt
 
 ## Running it
 
-Edit rss2masto.py, and at the bottom, edit the RSS feeds you want, and/or add more. Give each a friendly name in the 1st argument.
+Edit the .ini file appropriately
+
+Edit rss2masto.py, and have a look at it. Run it with -h too.
 
 Either manually run the script (remember to add your access token into the ini file OR into the MASTOTOKEN environment variable), or add it to cron.
 
@@ -50,6 +52,7 @@ Pull requests are welcome.
 ## Authors
 
 * **Leon Cowle** - *Initial work* - [Leon Cowle](https://github.com/leoncowle)
+* ** James Grimwood** - Modified to do various new things
 
 ## License
 

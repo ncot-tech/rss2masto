@@ -1,0 +1,5 @@
+[GLOBAL]
+mastoHOST = https://my.mastodon.server.org
+mastoTOKEN = generate-this-yourself
+mastoDB = rss2masto.db
+rssURL = https://ncot.uk/index.xml
